@@ -13,6 +13,10 @@ process.env.JWT_SECRET = 'test-secret';
 // Keep tests offline even when server/.env has real IGDB keys (dotenv won't override these).
 process.env.IGDB_CLIENT_ID = '';
 process.env.IGDB_CLIENT_SECRET = '';
+process.env.DISCORD_CLIENT_ID = 'discord-test-id';
+process.env.DISCORD_CLIENT_SECRET = 'discord-test-secret';
+process.env.TWITCH_CLIENT_ID = 'twitch-test-id';
+process.env.TWITCH_CLIENT_SECRET = 'twitch-test-secret';
 process.env.UPLOAD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'botfrag-uploads-'));
 const { default: app } = await import('../src/app.js');
 
@@ -217,6 +221,114 @@ test('IGDB: picking a game links its metadata, typed names match it, and outages
     assert.equal(offline.body.post.game.slug, 'some-indie-game');
   } finally {
     setIgdb({ enabled: false, search: async () => [], byId: async () => null, match: async () => null });
+  }
+});
+
+// ---------- Sign in with Discord / Twitch ----------
+
+const discordUsers = {
+  'code-new': { id: 'd1', username: 'Night.Owl!', global_name: 'Night Owl', avatar: 'abc', email: 'owl@example.com', verified: true },
+  'code-ana': { id: 'd2', username: 'ana', email: 'ana_frag@example.com', verified: true },
+  'code-unverified': { id: 'd3', username: 'ben', email: 'ben@example.com', verified: false },
+};
+
+async function fakeOAuthFetch(url, init = {}) {
+  const body = (data, status = 200) => ({ ok: status < 400, status, json: async () => data });
+  if (url === 'https://discord.com/api/oauth2/token') {
+    const code = new URLSearchParams(String(init.body)).get('code');
+    return discordUsers[code] ? body({ access_token: `tok-${code}` }) : body({ error: 'invalid_grant' }, 400);
+  }
+  if (url === 'https://discord.com/api/users/@me') return body(discordUsers[init.headers.Authorization.replace('Bearer tok-', '')]);
+  if (url === 'https://id.twitch.tv/oauth2/token') return body({ access_token: 'tw-tok' });
+  if (url === 'https://api.twitch.tv/helix/users') {
+    return body({ data: [{ id: 't1', login: 'streamer', display_name: 'Streamer', profile_image_url: 'https://static-cdn.jtvnw.net/x.png' }] });
+  }
+  throw new Error(`unexpected fetch ${url}`);
+}
+
+// Runs the redirect dance like a browser would and returns where the user lands.
+async function oauthSignIn(provider, code, { returnTo = '/games', tamper } = {}) {
+  const start = await api().get(`/api/auth/${provider}/start?returnTo=${encodeURIComponent(returnTo)}`).expect(302);
+  const authorize = new URL(start.headers.location);
+  const cookie = start.headers['set-cookie'][0].split(';')[0];
+  let state = authorize.searchParams.get('state');
+  if (tamper === 'state') state = state.slice(0, -2) + 'xx';
+  const req = api().get(`/api/auth/${provider}/callback?code=${code}&state=${state}`);
+  if (tamper !== 'cookie') req.set('Cookie', cookie);
+  const res = await req.expect(302);
+  return { authorize, location: res.headers.location };
+}
+
+const tokenFrom = (location) => new URLSearchParams(location.split('#')[1]).get('token');
+
+test('oauth: providers report whether they are configured', async () => {
+  const res = await api().get('/api/auth/providers').expect(200);
+  assert.deepEqual(res.body, { discord: true, twitch: true });
+});
+
+test('oauth: start redirects to the provider with scopes, redirect URI and a state cookie', async () => {
+  const { setOAuthFetch } = await import('../src/lib/oauth.js');
+  setOAuthFetch(fakeOAuthFetch);
+  const start = await api().get('/api/auth/discord/start').expect(302);
+  const url = new URL(start.headers.location);
+  assert.equal(url.origin + url.pathname, 'https://discord.com/oauth2/authorize');
+  assert.equal(url.searchParams.get('client_id'), 'discord-test-id');
+  assert.equal(url.searchParams.get('scope'), 'identify email');
+  assert.equal(url.searchParams.get('redirect_uri'), 'http://localhost:5173/api/auth/discord/callback');
+  assert.match(start.headers['set-cookie'][0], /bf_oauth=\w+;.*HttpOnly/i);
+  await api().get('/api/auth/myspace/start').expect(404);
+});
+
+test('oauth: a new Discord user gets an account, and signing in again reuses it', async () => {
+  const first = await oauthSignIn('discord', 'code-new');
+  assert.match(first.location, /^\/auth\/callback#token=.+&next=%2Fgames$/);
+  const me = await api().get('/api/auth/me').set(bearer(tokenFrom(first.location))).expect(200);
+  assert.equal(me.body.user.username, 'nightowl', 'username is cleaned up from the Discord handle');
+  assert.equal(me.body.user.displayName, 'Night Owl');
+  assert.equal(me.body.user.avatarUrl, 'https://cdn.discordapp.com/avatars/d1/abc.png?size=256');
+  assert.deepEqual(me.body.user.connections, { discord: 'Night.Owl!', twitch: null });
+
+  const again = await oauthSignIn('discord', 'code-new');
+  const me2 = await api().get('/api/auth/me').set(bearer(tokenFrom(again.location))).expect(200);
+  assert.equal(me2.body.user.id, me.body.user.id);
+
+  // Passwordless accounts can't be signed into with a password.
+  const pw = await api().post('/api/auth/login').send({ login: 'nightowl', password: '' }).expect(401);
+  assert.match(pw.body.message, /Discord or Twitch/);
+});
+
+test('oauth: a verified email links to the existing account; an unverified one does not', async () => {
+  const linked = await oauthSignIn('discord', 'code-ana');
+  const me = await api().get('/api/auth/me').set(bearer(tokenFrom(linked.location))).expect(200);
+  assert.equal(me.body.user.username, 'ana_frag');
+  assert.equal(me.body.user.connections.discord, 'ana');
+
+  const separate = await oauthSignIn('discord', 'code-unverified');
+  const other = await api().get('/api/auth/me').set(bearer(tokenFrom(separate.location))).expect(200);
+  assert.notEqual(other.body.user.username, 'ben', 'must not take over the existing ben account');
+  assert.match(other.body.user.username, /^ben_\d+$/);
+});
+
+test('oauth: Twitch sign-in works without an email', async () => {
+  const { location, authorize } = await oauthSignIn('twitch', 'any');
+  assert.equal(authorize.searchParams.get('scope'), 'user:read:email');
+  const me = await api().get('/api/auth/me').set(bearer(tokenFrom(location))).expect(200);
+  assert.equal(me.body.user.username, 'streamer');
+  assert.equal(me.body.user.connections.twitch, 'streamer');
+});
+
+test('oauth: forged state, missing cookie, cancelled or failed sign-ins are rejected', async () => {
+  assert.match((await oauthSignIn('discord', 'code-new', { tamper: 'state' })).location, /^\/login\?error=/);
+  assert.match((await oauthSignIn('discord', 'code-new', { tamper: 'cookie' })).location, /^\/login\?error=/);
+  assert.match((await oauthSignIn('discord', 'bad-code')).location, /^\/login\?error=Could/);
+  const cancelled = await api().get('/api/auth/discord/callback?error=access_denied').expect(302);
+  assert.match(cancelled.headers.location, /cancelled/);
+});
+
+test('oauth: returnTo only allows paths on this site', async () => {
+  for (const evil of ['https://evil.example', '//evil.example', '/login']) {
+    const { location } = await oauthSignIn('discord', 'code-new', { returnTo: evil });
+    assert.ok(location.endsWith('&next=%2F'), `${evil} -> ${location}`);
   }
 });
 

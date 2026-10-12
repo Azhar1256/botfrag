@@ -17,6 +17,7 @@ Botfrag started as a CSE470 university project ([Azhar1256/CSE470](https://githu
 - **Game pages**: every game gets a page automatically, with its average score, a score distribution chart, and all moments and reviews about it
 - **IGDB integration** (optional): search real games while posting, with box art, genres, platforms, release dates and summaries on game pages. Typed names like "baldurs gate 3" are matched to the right game
 - **Feeds**: Home, Following, Moments and Reviews, sorted by Latest or Top (this week / month / all time)
+- **Sign in with Discord or Twitch** (optional), alongside email and password. A verified email links to an existing account
 - **Player profiles**: avatar, bio, platforms, favourite games, and post/like/follower stats. You can follow other players
 - **Likes, comments and sharing**: post owners can moderate comments on their posts
 - **Search** across titles, descriptions, games and tags, plus tag pages and trending tags
@@ -28,7 +29,7 @@ Botfrag started as a CSE470 university project ([Azhar1256/CSE470](https://githu
 |---|---|
 | Client | React 19, React Router 7, Vite, hand-written CSS (no UI framework) |
 | Server | Node.js, Express 5, MongoDB with Mongoose 8 |
-| Auth | Email or username plus password (bcrypt), JWT bearer tokens |
+| Auth | Email or username plus password (bcrypt), Discord and Twitch OAuth, JWT bearer tokens |
 | Uploads | Multer to local disk, type-checked and size-limited |
 | Game data | [IGDB](https://api-docs.igdb.com) via a Twitch app token, cached in MongoDB |
 | Security | Helmet with a CSP, auth rate limiting, owner checks on every write, regex-safe search |
@@ -51,6 +52,15 @@ npm run seed                        # optional: demo players and posts
 3. Open it with **Manage**, copy the Client ID, click **New Secret**, and put both in `server/.env` as `IGDB_CLIENT_ID` and `IGDB_CLIENT_SECRET`
 
 Without these, everything still works; games just have no artwork or details.
+
+### Optional: sign in with Discord and Twitch
+
+The redirect URLs below are for local development. In production, use your domain and set `PUBLIC_URL` to it.
+
+- **Twitch** reuses the IGDB app. In its settings (**Manage**), add the OAuth redirect URL `http://localhost:5173/api/auth/twitch/callback`
+- **Discord**: create an application at [discord.com/developers/applications](https://discord.com/developers/applications). Under **OAuth2**, add the redirect `http://localhost:5173/api/auth/discord/callback`, then put the Client ID and Client Secret in `server/.env` as `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET`
+
+Each button only appears once its provider is configured.
 
 ### Run it
 
@@ -80,7 +90,7 @@ Uploads are stored in `server/uploads`. On hosts with ephemeral disks (Render, R
 npm test
 ```
 
-The tests cover sign-up and login, auth checks, post ownership, review scoring, media validation, uploads, likes, comments, follows, feeds and search, profiles and game stats, plus the IGDB client and game matching. IGDB is faked, so the tests never use your keys or the network.
+The tests cover sign-up and login, auth checks, post ownership, review scoring, media validation, uploads, likes, comments, follows, feeds and search, profiles and game stats, plus the IGDB client, game matching and Discord/Twitch sign-in, including forged and replayed sign-in attempts. IGDB, Discord and Twitch are faked, so the tests never use your keys or the network.
 
 ## Project structure
 
@@ -106,6 +116,8 @@ All routes are under `/api`. Routes marked 🔒 need an `Authorization: Bearer <
 |---|---|---|
 | POST | `/auth/signup`, `/auth/login` | Create an account or sign in |
 | GET 🔒 | `/auth/me` | Current user |
+| GET | `/auth/providers` | Which of Discord and Twitch sign-in are set up |
+| GET | `/auth/discord/start`, `/auth/twitch/start` | Start an OAuth sign-in (browser redirect) |
 | GET | `/posts?type=&game=&tag=&author=&q=&sort=latest\|top&period=&feed=following&page=` | Feed |
 | POST 🔒 | `/posts` | Create a moment or review. `game` is a name or `{ name, igdbId }` |
 | GET / PATCH 🔒 / DELETE 🔒 | `/posts/:id` | Read, edit or delete a post (owner only for writes) |

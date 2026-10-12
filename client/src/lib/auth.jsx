@@ -27,6 +27,18 @@ export function AuthProvider({ children }) {
       ready,
       login: (login, password) => api('/auth/login', { method: 'POST', body: { login, password } }).then(start),
       signup: (fields) => api('/auth/signup', { method: 'POST', body: fields }).then(start),
+      // Finishes a Discord/Twitch sign-in: the server hands back only a token.
+      adopt: async (token) => {
+        tokenStore.set(token);
+        try {
+          const { user } = await api('/auth/me');
+          setUser(user);
+          return user;
+        } catch (err) {
+          tokenStore.set(null);
+          throw err;
+        }
+      },
       logout: () => {
         tokenStore.set(null);
         setUser(null);

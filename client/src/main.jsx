@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout.jsx';
 import { AuthProvider } from './lib/auth.jsx';
 import Auth from './pages/Auth.jsx';
+import AuthCallback from './pages/AuthCallback.jsx';
 import Compose from './pages/Compose.jsx';
 import { GamePage, GamesPage } from './pages/Games.jsx';
 import Home from './pages/Home.jsx';
@@ -20,6 +21,7 @@ createRoot(document.getElementById('root')).render(
         <Routes>
           <Route path="/login" element={<Auth mode="login" />} />
           <Route path="/signup" element={<Auth mode="signup" />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
           <Route element={<Layout />}>
             <Route index element={<Home key="all" view="all" />} />
             <Route path="following" element={<Home key="following" view="following" />} />

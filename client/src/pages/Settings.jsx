@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import BrandIcon from '../components/BrandIcon.jsx';
 import Icon from '../components/Icon.jsx';
 import { Avatar, ErrorBox, Spinner } from '../components/ui.jsx';
 import { api, uploadFile } from '../lib/api.js';
@@ -107,6 +108,20 @@ export default function Settings() {
         <span className="label">Favourite games <span className="muted">(comma separated, up to 8)</span></span>
         <input className="input" value={f.favoriteGames} onChange={(e) => set('favoriteGames', e.target.value)} placeholder="Valorant, Elden Ring" />
       </label>
+
+      {(user.connections?.discord || user.connections?.twitch) && (
+        <div className="field">
+          <span className="label">Signs in with</span>
+          <div className="connections">
+            {['discord', 'twitch'].filter((k) => user.connections[k]).map((k) => (
+              <span key={k} className={`connection connection--${k}`}>
+                <BrandIcon name={k} size={16} />
+                {user.connections[k]}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <ErrorBox error={error} />
       <div className="form-actions">

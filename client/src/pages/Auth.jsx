@@ -1,7 +1,34 @@
 import { useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import BrandIcon from '../components/BrandIcon.jsx';
 import { ErrorBox } from '../components/ui.jsx';
 import { useAuth } from '../lib/auth.jsx';
+import useFetch from '../lib/useFetch.js';
+
+const PROVIDERS = [
+  ['discord', 'Discord'],
+  ['twitch', 'Twitch'],
+];
+
+function ProviderButtons({ from, isSignup }) {
+  const { data } = useFetch('/auth/providers');
+  const enabled = PROVIDERS.filter(([key]) => data?.[key]);
+  if (!enabled.length) return null;
+  return (
+    <>
+      <div className="oauth">
+        {enabled.map(([key, label]) => (
+          // A real navigation, not a router link: the server redirects to the provider.
+          <a key={key} className={`btn btn--block btn--${key}`} href={`/api/auth/${key}/start?returnTo=${encodeURIComponent(from)}`}>
+            <BrandIcon name={key} />
+            {isSignup ? 'Sign up' : 'Continue'} with {label}
+          </a>
+        ))}
+      </div>
+      <div className="divider"><span>or with email</span></div>
+    </>
+  );
+}
 
 export default function Auth({ mode }) {
   const { user, login, signup } = useAuth();
@@ -9,7 +36,8 @@ export default function Auth({ mode }) {
   const from = useLocation().state?.from || '/';
   const [form, setForm] = useState({ login: '', username: '', email: '', password: '' });
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
+  const [params] = useSearchParams();
+  const [error, setError] = useState(() => (params.get('error') ? new Error(params.get('error')) : null));
   const isSignup = mode === 'signup';
 
   if (user) return <Navigate to={from} replace />;
@@ -35,6 +63,8 @@ export default function Auth({ mode }) {
         <img src="/logo.png" alt="" width="64" height="64" />
         <h1>{isSignup ? 'Join Botfrag' : 'Welcome back'}</h1>
         <p className="muted">{isSignup ? 'Share your plays and reviews with other players.' : 'Sign in to post, like and comment.'}</p>
+
+        <ProviderButtons from={from} isSignup={isSignup} />
 
         {isSignup ? (
           <>
