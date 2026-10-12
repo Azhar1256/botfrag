@@ -20,6 +20,8 @@ app.set('trust proxy', 1);
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
+    // YouTube embeds fail with "Error 153" unless the page sends its origin as the referrer.
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     contentSecurityPolicy: {
       directives: {
         'img-src': ["'self'", 'data:', 'blob:', 'https:'],

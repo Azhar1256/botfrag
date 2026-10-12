@@ -8,6 +8,7 @@ function MediaItem({ item, autoPlay }) {
           src={`https://www.youtube-nocookie.com/embed/${item.url}`}
           title="YouTube clip"
           loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
           allow="accelerometer; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
         />
