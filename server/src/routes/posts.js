@@ -6,7 +6,8 @@ import Post from '../models/Post.js';
 import User from '../models/User.js';
 import Comment from '../models/Comment.js';
 import { optionalAuth, requireAuth } from '../middleware/auth.js';
-import { HttpError, escapeRegex, slugify, youtubeId } from '../lib/http.js';
+import { HttpError, escapeRegex, youtubeId } from '../lib/http.js';
+import { resolveGame } from '../lib/games.js';
 import config from '../config.js';
 
 const router = Router();
@@ -41,14 +42,11 @@ const parseMedia = (media) => {
 };
 
 // Copies only the fields a client may set, so author/likes/counters can't be forged.
-const applyInput = (post, body = {}) => {
+const applyInput = async (post, body = {}) => {
   if (body.type !== undefined) post.type = body.type;
   if (body.title !== undefined) post.title = body.title;
   if (body.body !== undefined) post.body = body.body;
-  if (body.game !== undefined) {
-    const name = String(body.game?.name ?? body.game).trim();
-    post.game = { name, slug: slugify(name) };
-  }
+  if (body.game !== undefined) post.game = await resolveGame(body.game);
   if (body.platform !== undefined) post.platform = body.platform;
   if (body.tags !== undefined) post.tags = parseTags(body.tags);
   if (body.media !== undefined) post.media = parseMedia(body.media);
@@ -99,7 +97,7 @@ router.get('/:id', optionalAuth, async (req, res) => {
 
 router.post('/', requireAuth, async (req, res) => {
   const post = new Post({ author: req.userId });
-  applyInput(post, req.body);
+  await applyInput(post, req.body);
   await post.save();
   await post.populate('author', AUTHOR_FIELDS);
   res.status(201).json({ post: post.toPublic(req.userId) });
@@ -108,7 +106,7 @@ router.post('/', requireAuth, async (req, res) => {
 router.patch('/:id', requireAuth, async (req, res) => {
   const post = await findPost(req.params.id);
   if (!post.author.equals(req.userId)) throw new HttpError(403, 'You can only edit your own posts');
-  applyInput(post, req.body);
+  await applyInput(post, req.body);
   await post.save();
   await post.populate('author', AUTHOR_FIELDS);
   res.json({ post: post.toPublic(req.userId) });

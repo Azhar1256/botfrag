@@ -10,6 +10,9 @@ import request from 'supertest';
 
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-secret';
+// Keep tests offline even when server/.env has real IGDB keys (dotenv won't override these).
+process.env.IGDB_CLIENT_ID = '';
+process.env.IGDB_CLIENT_SECRET = '';
 process.env.UPLOAD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'botfrag-uploads-'));
 const { default: app } = await import('../src/app.js');
 
@@ -170,6 +173,51 @@ test('deleting a post removes its comments', async () => {
   await api().get(`/api/posts/${postId}`).expect(404);
   await api().get(`/api/posts/${postId}/comments`).expect(404);
   assert.equal(await mongoose.model('Comment').countDocuments({ post: postId }), 0);
+});
+
+test('IGDB: picking a game links its metadata, typed names match it, and outages fall back', async () => {
+  const { setIgdb } = await import('../src/lib/games.js');
+  const witcher = {
+    igdbId: 1942, name: 'The Witcher 3: Wild Hunt', slug: 'the-witcher-3-wild-hunt', summary: 'Geralt.',
+    releaseDate: new Date('2015-05-19'), cover: 'co1wyy', screenshots: [], genres: ['RPG'], platforms: ['PC'], igdbRating: 93,
+  };
+  let up = true;
+  const calls = [];
+  setIgdb({
+    enabled: true,
+    search: async (q) => { calls.push(['search', q]); if (!up) throw new Error('down'); return [witcher]; },
+    byId: async (id) => { calls.push(['byId', id]); return id === 1942 ? witcher : null; },
+    match: async (name) => { if (!up) throw new Error('down'); return name.toLowerCase() === 'the witcher 3: wild hunt' ? witcher : null; },
+  });
+
+  try {
+    const picked = await api().post('/api/posts').set(bearer(ana))
+      .send({ type: 'review', title: 'Still the best', game: { name: 'witcher', igdbId: 1942 }, rating: 10 }).expect(201);
+    assert.deepEqual(picked.body.post.game, { name: 'The Witcher 3: Wild Hunt', slug: 'the-witcher-3-wild-hunt' });
+
+    // A differently-cased typed name lands on the same game page without another IGDB lookup by id.
+    const typed = await api().post('/api/posts').set(bearer(ben))
+      .send({ type: 'moment', title: 'Gwent win', game: 'THE WITCHER 3: wild hunt' }).expect(201);
+    assert.equal(typed.body.post.game.slug, 'the-witcher-3-wild-hunt');
+    assert.equal(calls.filter(([c]) => c === 'byId').length, 1);
+
+    const page = await api().get('/api/games/the-witcher-3-wild-hunt').expect(200);
+    assert.equal(page.body.game.meta.igdbRating, 93);
+    assert.deepEqual(page.body.game.meta.genres, ['RPG']);
+    assert.match(page.body.game.cover, /images\.igdb\.com.*co1wyy\.jpg$/);
+
+    const search = await api().get('/api/games/search?q=witch').expect(200);
+    assert.equal(search.body.results[0].slug, 'the-witcher-3-wild-hunt', 'games already on Botfrag come first');
+    assert.equal(search.body.results[0].posts, 2);
+    assert.equal(search.body.results.length, 1, 'IGDB duplicates of local games are dropped');
+
+    up = false;
+    const offline = await api().post('/api/posts').set(bearer(ben))
+      .send({ type: 'moment', title: 'Offline post', game: 'Some Indie Game' }).expect(201);
+    assert.equal(offline.body.post.game.slug, 'some-indie-game');
+  } finally {
+    setIgdb({ enabled: false, search: async () => [], byId: async () => null, match: async () => null });
+  }
 });
 
 test('unknown API routes return JSON 404', async () => {

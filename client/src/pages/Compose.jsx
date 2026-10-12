@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import GamePicker from '../components/GamePicker.jsx';
 import Icon from '../components/Icon.jsx';
 import { ErrorBox, Score, Spinner } from '../components/ui.jsx';
 import { api, uploadFile } from '../lib/api.js';
@@ -100,12 +101,11 @@ export default function Compose() {
   const { user, ready } = useAuth();
   const navigate = useNavigate();
   const existing = useFetch(id ? `/posts/${id}` : null);
-  const games = useFetch('/games?limit=100');
 
   const [form, setForm] = useState({
     type: search.get('type') === 'review' ? 'review' : 'moment',
     title: '',
-    game: search.get('game') ?? '',
+    game: { name: search.get('game') ?? '', igdbId: null },
     platform: user?.platforms?.[0] ?? '',
     rating: 8,
     body: '',
@@ -124,7 +124,7 @@ export default function Compose() {
   useEffect(() => {
     const p = existing.data?.post;
     if (!p) return;
-    setForm({ type: p.type, title: p.title, game: p.game.name, platform: p.platform, rating: p.rating ?? 8, body: p.body, tags: p.tags.join(', ') });
+    setForm({ type: p.type, title: p.title, game: { name: p.game.name, igdbId: null }, platform: p.platform, rating: p.rating ?? 8, body: p.body, tags: p.tags.join(', ') });
     setMedia(p.media);
   }, [existing.data]);
 
@@ -171,13 +171,10 @@ export default function Compose() {
       </div>
 
       <div className="grid-2">
-        <label className="field">
-          <span className="label">Game</span>
-          <input className="input" value={form.game} onChange={set('game')} list="game-options" required maxLength={80} placeholder="e.g. Valorant" />
-          <datalist id="game-options">
-            {games.data?.games.map((g) => <option key={g.slug} value={g.name} />)}
-          </datalist>
-        </label>
+        <div className="field">
+          <label className="label" htmlFor="game-input">Game</label>
+          <GamePicker id="game-input" value={form.game} onChange={(game) => setForm((f) => ({ ...f, game }))} />
+        </div>
         <label className="field">
           <span className="label">Platform</span>
           <select className="select" value={form.platform} onChange={set('platform')}>

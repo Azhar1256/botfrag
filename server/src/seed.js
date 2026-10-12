@@ -6,7 +6,8 @@ import config from './config.js';
 import User from './models/User.js';
 import Post from './models/Post.js';
 import Comment from './models/Comment.js';
-import { slugify } from './lib/http.js';
+import Game from './models/Game.js';
+import { igdbEnabled, resolveGame } from './lib/games.js';
 
 if (config.isProd) {
   console.error('Refusing to seed a production database.');
@@ -45,7 +46,11 @@ const comments = [
 ];
 
 await mongoose.connect(config.mongoUrl);
-await Promise.all([User.deleteMany({}), Post.deleteMany({}), Comment.deleteMany({})]);
+await Promise.all([User.deleteMany({}), Post.deleteMany({}), Comment.deleteMany({}), Game.deleteMany({})]);
+
+// With IGDB keys set, each game is matched to IGDB for cover art and details.
+const games = {};
+for (const name of new Set(posts.map((p) => p[2]))) games[name] = await resolveGame(name);
 
 const passwordHash = await bcrypt.hash('password123', 12);
 const users = await User.insertMany(players.map((p) => ({ ...p, email: `${p.username}@example.com`, passwordHash })));
@@ -65,7 +70,7 @@ for (const [i, [author, type, game, platform, title, body, tags, rating]] of pos
   const likers = users.filter((_, j) => (i * 7 + j * 3) % 5 < 3 && users[j].username !== author);
   const post = await Post.create({
     author: byName[author]._id, type, title, body, platform, tags, rating,
-    game: { name: game, slug: slugify(game) },
+    game: games[game],
     likes: likers.map((u) => u._id),
     createdAt, updatedAt: createdAt,
   });
@@ -79,5 +84,6 @@ for (const [i, [author, type, game, platform, title, body, tags, rating]] of pos
   await post.save({ timestamps: false });
 }
 
+console.log(`IGDB: ${igdbEnabled() ? `linked ${await Game.countDocuments()} of ${Object.keys(games).length} games` : 'not configured, games have no artwork'}`);
 console.log(`Seeded ${users.length} players and ${posts.length} posts. Sign in as any of them with password "password123", e.g. nightowl.`);
 await mongoose.disconnect();

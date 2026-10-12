@@ -59,22 +59,42 @@ export function GamePage() {
   if (loading) return <Spinner />;
   if (error) return <Empty title="No posts about this game yet"><p className="muted">{error.message}</p></Empty>;
   const g = data.game;
+  const m = g.meta;
   const max = Math.max(1, ...g.distribution);
 
   return (
     <>
-      <section className="game-hero card" style={{ background: cover(g) }}>
-        <div className="game-hero__shade">
-          <div>
+      <section className="game-hero card">
+        <div
+          className="game-hero__backdrop"
+          style={{ background: m?.screenshots?.[0] ? `center/cover url(${m.screenshots[0]})` : cover(g) }}
+        />
+        <div className="game-hero__content">
+          <div className="game-hero__art" style={{ background: cover(g) }} />
+          <div className="game-hero__info">
             <h1>{g.name}</h1>
-            <p>{plural(g.posts, 'post')} · {plural(g.likes, 'like')} · active {timeAgo(g.lastActivity)} ago</p>
+            <p className="game-hero__facts">
+              {m?.releaseDate && <span>{new Date(m.releaseDate).getUTCFullYear()}</span>}
+              {m?.platforms.length > 0 && <span>{m.platforms.slice(0, 5).join(' · ')}</span>}
+            </p>
+            {m?.genres.length > 0 && (
+              <div className="tag-cloud">
+                {m.genres.map((x) => <span key={x} className="chip chip--plain">{x}</span>)}
+              </div>
+            )}
+            {m?.summary && <p className="game-hero__summary">{m.summary}</p>}
+            <p className="game-hero__stats">
+              {plural(g.posts, 'post')} · {plural(g.likes, 'like')} · active {timeAgo(g.lastActivity) === 'now' ? 'just now' : `${timeAgo(g.lastActivity)} ago`}
+              {m?.igdbRating != null && <> · IGDB {m.igdbRating}/100</>}
+            </p>
+            {m && <p className="muted small">Game info from <a href="https://www.igdb.com" target="_blank" rel="noreferrer">IGDB.com</a></p>}
+            {user && (
+              <div className="game-hero__cta">
+                <Link to={`/new?game=${encodeURIComponent(g.name)}`} className="btn btn--primary btn--sm"><Icon name="clip" size={16} />Share a moment</Link>
+                <Link to={`/new?type=review&game=${encodeURIComponent(g.name)}`} className="btn btn--ghost btn--sm"><Icon name="star" size={16} />Review it</Link>
+              </div>
+            )}
           </div>
-          {user && (
-            <div className="game-hero__cta">
-              <Link to={`/new?game=${encodeURIComponent(g.name)}`} className="btn btn--primary btn--sm"><Icon name="clip" size={16} />Share a moment</Link>
-              <Link to={`/new?type=review&game=${encodeURIComponent(g.name)}`} className="btn btn--ghost btn--sm"><Icon name="star" size={16} />Review it</Link>
-            </div>
-          )}
         </div>
       </section>
 

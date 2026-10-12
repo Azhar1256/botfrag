@@ -18,5 +18,7 @@ export default {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   uploadDir: path.resolve(root, process.env.UPLOAD_DIR || 'uploads'),
   clientDist: path.resolve(root, '../client/dist'),
+  igdbClientId: process.env.IGDB_CLIENT_ID || '',
+  igdbClientSecret: process.env.IGDB_CLIENT_SECRET || '',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
 };
