@@ -70,6 +70,15 @@ export const providers = {
       };
     },
   },
+
+  // Steam uses OpenID 2.0 rather than OAuth; the auth routes handle its redirect and check.
+  // It needs no keys; the Web API key only adds the Steam name and avatar.
+  steam: {
+    label: 'Steam',
+    openid: true,
+    clientId: () => 'openid',
+    clientSecret: () => 'openid',
+  },
 };
 
 export const isEnabled = (name) => Boolean(providers[name]?.clientId() && providers[name]?.clientSecret());
@@ -82,9 +91,10 @@ export const authorizeUrl = (name, state) => {
 };
 
 let fetchImpl = (...args) => globalThis.fetch(...args);
-// Lets tests fake Discord and Twitch.
+// Lets tests fake Discord, Twitch and Steam.
 export const setOAuthFetch = (fn) => {
   fetchImpl = fn;
 };
+export const oauthFetch = (...args) => fetchImpl(...args);
 
 export const fetchProfile = (name, code) => providers[name].profile(fetchImpl, code, redirectUri(name));

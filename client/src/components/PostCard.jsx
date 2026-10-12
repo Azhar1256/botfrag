@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { compact, timeAgo } from '../lib/format.js';
+import BrandIcon from './BrandIcon.jsx';
 import Icon from './Icon.jsx';
 import Media from './Media.jsx';
 import { Avatar, Score, TypeBadge, UserLink } from './ui.jsx';
@@ -59,6 +60,25 @@ export function ShareButton({ post }) {
   );
 }
 
+const hoursLabel = (h) => (h >= 100 ? Math.round(h).toLocaleString() : h < 1 ? '<1' : h.toFixed(h % 1 ? 1 : 0));
+
+// Playtime the server read from the author's Steam library when they posted.
+export function SteamPlaytime({ steam }) {
+  if (!steam) return null;
+  return (
+    <a
+      className="chip chip--steam"
+      href={`https://store.steampowered.com/app/${steam.appid}`}
+      target="_blank"
+      rel="noreferrer"
+      title="Verified from the author's Steam library when they posted"
+    >
+      <BrandIcon name="steam" size={13} />
+      {hoursLabel(steam.hours)} hrs on Steam
+    </a>
+  );
+}
+
 export function PostByline({ post }) {
   return (
     <div className="byline">
@@ -100,6 +120,7 @@ export default function PostCard({ post: initial }) {
           <Icon name="gamepad" size={14} />
           {post.game.name}
         </Link>
+        <SteamPlaytime steam={post.steam} />
         {post.tags.slice(0, 4).map((t) => (
           <Link key={t} to={`/tags/${t}`} className="chip">#{t}</Link>
         ))}

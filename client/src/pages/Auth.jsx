@@ -5,9 +5,10 @@ import { ErrorBox } from '../components/ui.jsx';
 import { useAuth } from '../lib/auth.jsx';
 import useFetch from '../lib/useFetch.js';
 
-const PROVIDERS = [
+export const PROVIDERS = [
   ['discord', 'Discord'],
   ['twitch', 'Twitch'],
+  ['steam', 'Steam'],
 ];
 
 function ProviderButtons({ from, isSignup }) {

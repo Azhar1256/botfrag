@@ -1,10 +1,72 @@
 import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import BrandIcon from '../components/BrandIcon.jsx';
 import Icon from '../components/Icon.jsx';
 import { Avatar, ErrorBox, Spinner } from '../components/ui.jsx';
 import { api, uploadFile } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
+import useFetch from '../lib/useFetch.js';
+import { PROVIDERS } from './Auth.jsx';
+
+function Connections({ user, setUser }) {
+  const { data: enabled } = useFetch('/auth/providers');
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState(null);
+  const shown = PROVIDERS.filter(([key]) => enabled?.[key] || user.connections?.[key]);
+  if (!shown.length) return null;
+
+  const connect = async (key) => {
+    setBusy(key);
+    setError(null);
+    try {
+      const { ticket } = await api('/auth/link-ticket', { method: 'POST' });
+      window.location.assign(`/api/auth/${key}/start?link=${encodeURIComponent(ticket)}`);
+    } catch (err) {
+      setError(err);
+      setBusy(null);
+    }
+  };
+
+  const disconnect = async (key, label) => {
+    if (!window.confirm(`Disconnect ${label}?`)) return;
+    setBusy(key);
+    setError(null);
+    try {
+      const { user: updated } = await api(`/auth/connections/${key}`, { method: 'DELETE' });
+      setUser(updated);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="field">
+      <span className="label">Connected accounts</span>
+      <ul className="connection-list">
+        {shown.map(([key, label]) => (
+          <li key={key} className={`connection connection--${key}`}>
+            <BrandIcon name={key} size={18} />
+            <span className="connection__text">
+              <strong>{label}</strong>
+              <small className="muted">
+                {user.connections?.[key] ?? 'Not connected'}
+                {key === 'steam' && !user.connections?.steam && ' · shows your playtime on posts'}
+              </small>
+            </span>
+            {user.connections?.[key] ? (
+              <button type="button" className="btn btn--text btn--sm" disabled={busy === key} onClick={() => disconnect(key, label)}>Disconnect</button>
+            ) : (
+              <button type="button" className="btn btn--ghost btn--sm" disabled={busy === key} onClick={() => connect(key)}>Connect</button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <ErrorBox error={error} />
+    </div>
+  );
+}
 
 const PLATFORMS = ['PC', 'PlayStation', 'Xbox', 'Switch', 'Mobile', 'Other'];
 
@@ -14,7 +76,8 @@ export default function Settings() {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState(null);
+  const [params] = useSearchParams();
+  const [error, setError] = useState(() => (params.get('error') ? new Error(params.get('error')) : null));
 
   if (!ready) return <Spinner />;
   if (!user) return <Navigate to="/login" replace state={{ from: '/settings' }} />;
@@ -109,19 +172,7 @@ export default function Settings() {
         <input className="input" value={f.favoriteGames} onChange={(e) => set('favoriteGames', e.target.value)} placeholder="Valorant, Elden Ring" />
       </label>
 
-      {(user.connections?.discord || user.connections?.twitch) && (
-        <div className="field">
-          <span className="label">Signs in with</span>
-          <div className="connections">
-            {['discord', 'twitch'].filter((k) => user.connections[k]).map((k) => (
-              <span key={k} className={`connection connection--${k}`}>
-                <BrandIcon name={k} size={16} />
-                {user.connections[k]}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      <Connections user={user} setUser={setUser} />
 
       <ErrorBox error={error} />
       <div className="form-actions">

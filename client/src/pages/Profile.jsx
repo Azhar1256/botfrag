@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import Feed from '../components/Feed.jsx';
+import BrandIcon from '../components/BrandIcon.jsx';
 import Icon from '../components/Icon.jsx';
 import { Avatar, Empty, Spinner, Tabs } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
@@ -56,6 +57,12 @@ export default function Profile() {
           {user.bio && <p className="profile__bio">{user.bio}</p>}
 
           <div className="profile__chips">
+            {user.steamId && (
+              <a className="chip chip--steam" href={`https://steamcommunity.com/profiles/${user.steamId}`} target="_blank" rel="noreferrer">
+                <BrandIcon name="steam" size={13} />
+                {user.connections.steam}
+              </a>
+            )}
             {user.platforms.map((p) => <span key={p} className="chip chip--plain">{p}</span>)}
             {user.favoriteGames.map((g) => (
               <Link key={g} to={`/games/${slugifyGame(g)}`} className="chip chip--game"><Icon name="gamepad" size={14} />{g}</Link>

@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import Post from '../models/Post.js';
 import { HttpError, escapeRegex } from '../lib/http.js';
-import { gameMeta, igdbEnabled, publicMeta, searchGames } from '../lib/games.js';
-import { coverUrl } from '../lib/igdb.js';
+import { artUrl, gameMeta, igdbEnabled, publicMeta, searchGames } from '../lib/games.js';
 
 const router = Router();
 
@@ -36,7 +35,7 @@ const gameStats = (match, limit) => [
   { $lookup: { from: 'games', localField: '_id', foreignField: 'slug', as: 'meta' } },
   {
     $project: {
-      igdbCover: { $first: '$meta.cover' },
+      art: { $first: '$meta' },
       genres: { $ifNull: [{ $first: '$meta.genres' }, []] },
       _id: 0,
       slug: '$_id',
@@ -52,8 +51,8 @@ const gameStats = (match, limit) => [
   },
 ];
 
-// IGDB box art when we have it, otherwise any image uploaded to one of the game's posts.
-const withArt = ({ igdbCover, ...g }) => ({ ...g, cover: igdbCover ? coverUrl(igdbCover) : g.cover ?? null });
+// IGDB or Giant Bomb art when we have it, otherwise any image uploaded to one of the game's posts.
+const withArt = ({ art, ...g }) => ({ ...g, cover: artUrl(art) || g.cover || null });
 
 const nameFilter = (q) => ({ 'game.name': new RegExp(escapeRegex(String(q).slice(0, 80)), 'i') });
 
@@ -82,7 +81,7 @@ router.get('/games/:slug', async (req, res) => {
   const [stats] = await Post.aggregate(gameStats({ 'game.slug': req.params.slug }, 1));
   if (!stats) throw new HttpError(404, 'No posts about this game yet');
   const meta = await gameMeta(stats.slug, stats.name);
-  const game = { ...withArt({ ...stats, igdbCover: meta?.cover }), meta: publicMeta(meta) };
+  const game = { ...withArt({ ...stats, art: meta }), meta: publicMeta(meta) };
 
   const buckets = await Post.aggregate([
     { $match: { 'game.slug': req.params.slug, type: 'review' } },

@@ -5,7 +5,8 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { requireAuth, signToken } from '../middleware/auth.js';
 import { HttpError } from '../lib/http.js';
-import { authorizeUrl, fetchProfile, isEnabled, providers } from '../lib/oauth.js';
+import { authorizeUrl, fetchProfile, isEnabled, oauthFetch, providers, redirectUri } from '../lib/oauth.js';
+import { loginUrl as steamLoginUrl, steamApi, verifyLogin as verifySteamLogin } from '../lib/steam.js';
 import config from '../config.js';
 
 const router = Router();
@@ -48,7 +49,7 @@ router.post('/login', async (req, res) => {
   res.json(session(user));
 });
 
-// ---------- Sign in with Discord / Twitch ----------
+// ---------- Sign in with Discord / Twitch / Steam ----------
 
 const STATE_COOKIE = 'bf_oauth';
 const STATE_MS = 10 * 60 * 1000;
@@ -70,15 +71,39 @@ const knownProvider = (req) => {
   return provider;
 };
 
+// A signed-in user asks for a short-lived ticket, then opens /:provider/start?link=<ticket>
+// to connect that provider to their existing account. (The start page is a plain browser
+// navigation, so it can't carry the usual Authorization header.)
+router.post('/link-ticket', requireAuth, (req, res) => {
+  res.json({ ticket: jwt.sign({ sub: req.userId, purpose: 'link' }, config.jwtSecret, { expiresIn: '5m' }) });
+});
+
 router.get('/:provider/start', (req, res) => {
   const provider = knownProvider(req);
-  if (!isEnabled(provider)) return res.redirect(`/login?error=${encodeURIComponent(`${providers[provider].label} sign-in is not set up yet`)}`);
+  const label = providers[provider].label;
+  if (!isEnabled(provider)) return res.redirect(`/login?error=${encodeURIComponent(`${label} sign-in is not set up yet`)}`);
+
+  let link = null;
+  if (req.query.link) {
+    try {
+      const ticket = jwt.verify(String(req.query.link), config.jwtSecret);
+      if (ticket.purpose !== 'link') throw new Error('wrong purpose');
+      link = ticket.sub;
+    } catch {
+      return res.redirect(`/settings?error=${encodeURIComponent('That link expired. Please try again.')}`);
+    }
+  }
 
   // The nonce lives in an httpOnly cookie and inside the signed state, so a callback
   // only completes in the browser that started it (protects against login CSRF).
   const nonce = crypto.randomBytes(16).toString('hex');
-  const state = jwt.sign({ nonce, provider, returnTo: safeReturnTo(req.query.returnTo) }, config.jwtSecret, { expiresIn: STATE_MS / 1000 });
+  const returnTo = link ? '/settings' : safeReturnTo(req.query.returnTo);
+  const state = jwt.sign({ nonce, provider, returnTo, link }, config.jwtSecret, { expiresIn: STATE_MS / 1000 });
   res.cookie(STATE_COOKIE, nonce, cookieOptions);
+
+  if (providers[provider].openid) {
+    return res.redirect(steamLoginUrl(`${redirectUri(provider)}?${new URLSearchParams({ state })}`, config.publicUrl));
+  }
   return res.redirect(authorizeUrl(provider, state));
 });
 
@@ -120,32 +145,82 @@ export async function userForProfile(provider, profile) {
   });
 }
 
+// Connects a provider account to an existing Botfrag account.
+async function linkToUser(userId, provider, profile) {
+  const key = `connections.${provider}`;
+  const owner = await User.findOne({ [`${key}.id`]: profile.id });
+  if (owner && !owner._id.equals(userId)) {
+    throw new HttpError(409, `That ${providers[provider].label} account is already connected to another Botfrag account`);
+  }
+  const user = await User.findById(userId);
+  if (!user) throw new HttpError(404, 'Account not found');
+  user.set(key, { id: profile.id, username: profile.username });
+  if (!user.avatarUrl && profile.avatarUrl) user.avatarUrl = profile.avatarUrl;
+  return user.save();
+}
+
+// Steam's OpenID response, checked with Steam, turned into the same profile shape as the others.
+async function steamProfile(req) {
+  const expectedReturnTo = `${redirectUri('steam')}?${new URLSearchParams({ state: String(req.query.state) })}`;
+  const steamId = await verifySteamLogin(req.query, expectedReturnTo, oauthFetch);
+  if (!steamId) throw new Error('Steam could not confirm this sign-in');
+  let player = null;
+  try {
+    player = await steamApi().player(steamId);
+  } catch (err) {
+    console.warn('[steam]', err.message); // the profile is a bonus; the sign-in itself is verified
+  }
+  return {
+    id: steamId,
+    username: player?.name || `steam_${steamId.slice(-5)}`,
+    displayName: player?.name || 'Steam player',
+    avatarUrl: player?.avatarUrl || '',
+    email: null,
+    emailVerified: false,
+  };
+}
+
 router.get('/:provider/callback', async (req, res) => {
   const provider = knownProvider(req);
-  const fail = (message) => res.redirect(`/login?error=${encodeURIComponent(message)}`);
   const label = providers[provider].label;
   const nonce = readCookie(req, STATE_COOKIE);
   res.clearCookie(STATE_COOKIE, { ...cookieOptions, maxAge: undefined });
-
-  if (req.query.error) return fail(`${label} sign-in was cancelled`);
 
   let state;
   try {
     state = jwt.verify(String(req.query.state), config.jwtSecret);
   } catch {
-    return fail('That sign-in link expired. Please try again.');
+    state = null;
   }
+  const fail = (message) => res.redirect(`${state?.link ? '/settings' : '/login'}?error=${encodeURIComponent(message)}`);
+
+  if (req.query.error || req.query['openid.mode'] === 'cancel') return fail(`${label} sign-in was cancelled`);
+  if (!state) return fail('That sign-in link expired. Please try again.');
   if (!nonce || state.nonce !== nonce || state.provider !== provider) return fail('Sign-in could not be verified. Please try again.');
 
   try {
-    const profile = await fetchProfile(provider, String(req.query.code ?? ''));
-    const user = await userForProfile(provider, profile);
+    const profile = providers[provider].openid ? await steamProfile(req) : await fetchProfile(provider, String(req.query.code ?? ''));
+    const user = state.link ? await linkToUser(state.link, provider, profile) : await userForProfile(provider, profile);
     // The token goes in the URL fragment, which browsers never send to servers or put in Referer headers.
     return res.redirect(`/auth/callback#${new URLSearchParams({ token: signToken(user), next: state.returnTo })}`);
   } catch (err) {
     console.warn(`[oauth:${provider}]`, err.message);
-    return fail(`Could not sign in with ${label}. Please try again.`);
+    return fail(err.status === 409 ? err.message : `Could not sign in with ${label}. Please try again.`);
   }
+});
+
+// Disconnects a provider, as long as the account keeps another way to sign in.
+router.delete('/connections/:provider', requireAuth, async (req, res) => {
+  const provider = knownProvider(req);
+  const user = await User.findById(req.userId).select('+passwordHash');
+  if (!user) throw new HttpError(401, 'Account not found');
+  const others = Object.keys(providers).filter((p) => p !== provider && user.connections?.[p]?.id);
+  if (!user.passwordHash && others.length === 0) {
+    throw new HttpError(400, `${providers[provider].label} is your only way to sign in, so it can't be disconnected`);
+  }
+  user.set(`connections.${provider}`, undefined);
+  await user.save();
+  res.json({ user: user.toPublic(req.userId) });
 });
 
 router.get('/me', requireAuth, async (req, res) => {

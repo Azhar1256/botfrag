@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import Icon from '../components/Icon.jsx';
 import Media from '../components/Media.jsx';
-import { LikeButton, PostByline, ShareButton } from '../components/PostCard.jsx';
+import { LikeButton, PostByline, ShareButton, SteamPlaytime } from '../components/PostCard.jsx';
 import { Avatar, Empty, ErrorBox, Score, Spinner, UserLink } from '../components/ui.jsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
@@ -133,6 +133,7 @@ export default function PostPage() {
 
         <div className="post-card__meta">
           <Link to={`/games/${post.game.slug}`} className="chip chip--game"><Icon name="gamepad" size={14} />{post.game.name}</Link>
+          <SteamPlaytime steam={post.steam} />
           {post.tags.map((t) => <Link key={t} to={`/tags/${t}`} className="chip">#{t}</Link>)}
         </div>
         <p className="muted small">

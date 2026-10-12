@@ -31,6 +31,12 @@ const postSchema = new mongoose.Schema(
       max: 10,
       required: [function needsRating() { return this.type === 'review'; }, 'Reviews need a score from 1 to 10'],
     },
+    // The author's Steam playtime for this game when they posted, fetched by the server from
+    // Steam (so it can't be typed in). Absent if they haven't connected Steam or don't own it there.
+    steam: {
+      appid: Number,
+      minutes: Number,
+    },
     likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     likeCount: { type: Number, default: 0 },
     commentCount: { type: Number, default: 0 },
@@ -60,6 +66,7 @@ postSchema.methods.toPublic = function toPublic(viewerId) {
     tags: this.tags,
     media: this.media,
     rating: this.rating ?? null,
+    steam: this.steam?.appid ? { appid: this.steam.appid, hours: Math.round((this.steam.minutes / 60) * 10) / 10 } : null,
     likeCount: this.likes.length,
     liked: viewerId ? this.likes.some((l) => l.equals(viewerId)) : false,
     commentCount: this.commentCount,

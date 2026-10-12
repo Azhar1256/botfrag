@@ -87,11 +87,21 @@ export function GamePage() {
               {plural(g.posts, 'post')} · {plural(g.likes, 'like')} · active {timeAgo(g.lastActivity) === 'now' ? 'just now' : `${timeAgo(g.lastActivity)} ago`}
               {m?.igdbRating != null && <> · IGDB {m.igdbRating}/100</>}
             </p>
-            {m && <p className="muted small">Game info from <a href="https://www.igdb.com" target="_blank" rel="noreferrer">IGDB.com</a></p>}
+            {m && (m.igdbId || m.giantBombUrl) && (
+              <p className="muted small">
+                Game info from{' '}
+                {m.igdbId && <a href="https://www.igdb.com" target="_blank" rel="noreferrer">IGDB.com</a>}
+                {m.igdbId && m.giantBombUrl && ' and '}
+                {m.giantBombUrl && <a href={m.giantBombUrl} target="_blank" rel="noreferrer">Giant Bomb</a>}
+              </p>
+            )}
             {user && (
               <div className="game-hero__cta">
                 <Link to={`/new?game=${encodeURIComponent(g.name)}`} className="btn btn--primary btn--sm"><Icon name="clip" size={16} />Share a moment</Link>
                 <Link to={`/new?type=review&game=${encodeURIComponent(g.name)}`} className="btn btn--ghost btn--sm"><Icon name="star" size={16} />Review it</Link>
+                {m?.giantBombUrl && (
+                  <a href={m.giantBombUrl} target="_blank" rel="noreferrer" className="btn btn--text btn--sm"><Icon name="link" size={16} />More on Giant Bomb</a>
+                )}
               </div>
             )}
           </div>

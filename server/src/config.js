@@ -25,6 +25,8 @@ export default {
   clientDist: path.resolve(root, '../client/dist'),
   igdbClientId: process.env.IGDB_CLIENT_ID || '',
   igdbClientSecret: process.env.IGDB_CLIENT_SECRET || '',
+  giantBombApiKey: process.env.GIANTBOMB_API_KEY || '',
+  steamApiKey: process.env.STEAM_API_KEY || '',
   discordClientId: process.env.DISCORD_CLIENT_ID || '',
   discordClientSecret: process.env.DISCORD_CLIENT_SECRET || '',
   twitchClientId: process.env.TWITCH_CLIENT_ID || '',

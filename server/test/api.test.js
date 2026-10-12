@@ -13,6 +13,8 @@ process.env.JWT_SECRET = 'test-secret';
 // Keep tests offline even when server/.env has real IGDB keys (dotenv won't override these).
 process.env.IGDB_CLIENT_ID = '';
 process.env.IGDB_CLIENT_SECRET = '';
+process.env.STEAM_API_KEY = '';
+process.env.GIANTBOMB_API_KEY = '';
 process.env.DISCORD_CLIENT_ID = 'discord-test-id';
 process.env.DISCORD_CLIENT_SECRET = 'discord-test-secret';
 process.env.TWITCH_CLIENT_ID = 'twitch-test-id';
@@ -233,7 +235,13 @@ const discordUsers = {
 };
 
 async function fakeOAuthFetch(url, init = {}) {
-  const body = (data, status = 200) => ({ ok: status < 400, status, json: async () => data });
+  const body = (data, status = 200) => ({ ok: status < 400, status, json: async () => data, text: async () => String(data) });
+  if (url === 'https://steamcommunity.com/openid/login') {
+    // Steam confirms only responses carrying the signature it issued.
+    const params = new URLSearchParams(String(init.body));
+    assert.equal(params.get('openid.mode'), 'check_authentication');
+    return body(`ns:http://specs.openid.net/auth/2.0\nis_valid:${params.get('openid.sig') === 'genuine'}\n`);
+  }
   if (url === 'https://discord.com/api/oauth2/token') {
     const code = new URLSearchParams(String(init.body)).get('code');
     return discordUsers[code] ? body({ access_token: `tok-${code}` }) : body({ error: 'invalid_grant' }, 400);
@@ -263,7 +271,7 @@ const tokenFrom = (location) => new URLSearchParams(location.split('#')[1]).get(
 
 test('oauth: providers report whether they are configured', async () => {
   const res = await api().get('/api/auth/providers').expect(200);
-  assert.deepEqual(res.body, { discord: true, twitch: true });
+  assert.deepEqual(res.body, { discord: true, twitch: true, steam: true });
 });
 
 test('oauth: start redirects to the provider with scopes, redirect URI and a state cookie', async () => {
@@ -286,7 +294,7 @@ test('oauth: a new Discord user gets an account, and signing in again reuses it'
   assert.equal(me.body.user.username, 'nightowl', 'username is cleaned up from the Discord handle');
   assert.equal(me.body.user.displayName, 'Night Owl');
   assert.equal(me.body.user.avatarUrl, 'https://cdn.discordapp.com/avatars/d1/abc.png?size=256');
-  assert.deepEqual(me.body.user.connections, { discord: 'Night.Owl!', twitch: null });
+  assert.deepEqual(me.body.user.connections, { discord: 'Night.Owl!', twitch: null, steam: null });
 
   const again = await oauthSignIn('discord', 'code-new');
   const me2 = await api().get('/api/auth/me').set(bearer(tokenFrom(again.location))).expect(200);
@@ -329,6 +337,147 @@ test('oauth: returnTo only allows paths on this site', async () => {
   for (const evil of ['https://evil.example', '//evil.example', '/login']) {
     const { location } = await oauthSignIn('discord', 'code-new', { returnTo: evil });
     assert.ok(location.endsWith('&next=%2F'), `${evil} -> ${location}`);
+  }
+});
+
+// ---------- Steam ----------
+
+const STEAM_ID = '76561198000000001';
+
+// Plays the browser through Steam's OpenID login and back.
+async function steamSignIn({ link, sig = 'genuine', steamId = STEAM_ID, returnToOverride } = {}) {
+  const start = await api().get(`/api/auth/steam/start${link ? `?link=${link}` : ''}`).expect(302);
+  const steam = new URL(start.headers.location);
+  assert.equal(steam.origin + steam.pathname, 'https://steamcommunity.com/openid/login');
+  assert.equal(steam.searchParams.get('openid.realm'), 'http://localhost:5173');
+  const returnTo = returnToOverride ?? steam.searchParams.get('openid.return_to');
+  const back = new URL(steam.searchParams.get('openid.return_to'));
+  const claimed = `https://steamcommunity.com/openid/id/${steamId}`;
+  const response = new URLSearchParams({
+    state: back.searchParams.get('state'),
+    'openid.ns': 'http://specs.openid.net/auth/2.0',
+    'openid.mode': 'id_res',
+    'openid.op_endpoint': 'https://steamcommunity.com/openid/login',
+    'openid.claimed_id': claimed,
+    'openid.identity': claimed,
+    'openid.return_to': returnTo,
+    'openid.response_nonce': '2026-10-12T10:00:00Zabc',
+    'openid.assoc_handle': '1234567890',
+    'openid.signed': 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle',
+    'openid.sig': sig,
+  });
+  const res = await api().get(`${back.pathname}?${response}`).set('Cookie', start.headers['set-cookie'][0].split(';')[0]).expect(302);
+  return res.headers.location;
+}
+
+test('steam: OpenID sign-in creates an account from the Steam profile', async () => {
+  const { setSteam } = await import('../src/lib/steam.js');
+  setSteam({
+    enabled: true,
+    player: async (id) => (id === STEAM_ID ? { name: 'GabeFan', avatarUrl: 'https://avatars.steamstatic.com/x_full.jpg' } : null),
+    playtime: async () => null,
+  });
+  const location = await steamSignIn();
+  const me = await api().get('/api/auth/me').set(bearer(tokenFrom(location))).expect(200);
+  assert.equal(me.body.user.username, 'gabefan');
+  assert.equal(me.body.user.connections.steam, 'GabeFan');
+  assert.equal(me.body.user.steamId, STEAM_ID);
+});
+
+test('steam: forged signatures and responses meant for another site are rejected', async () => {
+  assert.match(await steamSignIn({ sig: 'forged' }), /^\/login\?error=Could/);
+  assert.match(await steamSignIn({ returnToOverride: 'https://evil.example/callback' }), /^\/login\?error=Could/);
+  const cancelled = await api().get('/api/auth/steam/callback?openid.mode=cancel').expect(302);
+  assert.match(cancelled.headers.location, /cancelled/);
+});
+
+test('linking: a signed-in user connects Steam, then can disconnect it', async () => {
+  const ticket = (await api().post('/api/auth/link-ticket').set(bearer(ben)).expect(200)).body.ticket;
+  await api().post('/api/auth/link-ticket').expect(401);
+
+  // That Steam account already belongs to gabefan.
+  assert.match(await steamSignIn({ link: ticket }), /^\/settings\?error=That%20Steam%20account%20is%20already%20connected/);
+
+  const other = '76561198000000002';
+  const location = await steamSignIn({ link: ticket, steamId: other });
+  assert.match(location, /next=%2Fsettings$/);
+  const me = await api().get('/api/auth/me').set(bearer(tokenFrom(location))).expect(200);
+  assert.equal(me.body.user.username, 'ben', 'linked to the signed-in account, not a new one');
+  assert.equal(me.body.user.steamId, other);
+
+  const off = await api().delete('/api/auth/connections/steam').set(bearer(ben)).expect(200);
+  assert.equal(off.body.user.connections.steam, null);
+
+  // A Discord-only account can't remove its only sign-in method.
+  const owl = tokenFrom((await oauthSignIn('discord', 'code-new')).location);
+  await api().delete('/api/auth/connections/discord').set(bearer(owl)).expect(400);
+
+  assert.match((await api().get('/api/auth/steam/start?link=not-a-ticket').expect(302)).headers.location, /^\/settings\?error=/);
+});
+
+test('steam: posts record the author\'s playtime, fetched by the server', async () => {
+  const { setSteam } = await import('../src/lib/steam.js');
+  const asked = [];
+  setSteam({
+    enabled: true,
+    player: async () => null,
+    playtime: async (id, game) => {
+      asked.push([id, game]);
+      return game === 'Hades II' ? { appid: 1145350, minutes: 5130 } : null;
+    },
+  });
+  try {
+    const gabe = tokenFrom(await steamSignIn());
+    const review = await api().post('/api/posts').set(bearer(gabe))
+      .send({ type: 'review', title: 'Peak', game: 'Hades II', rating: 10, steam: { appid: 1, minutes: 999999 } }).expect(201);
+    assert.deepEqual(review.body.post.steam, { appid: 1145350, hours: 85.5 }, 'client-sent playtime is ignored');
+    assert.deepEqual(asked.at(-1), [STEAM_ID, 'Hades II']);
+
+    const notOwned = await api().post('/api/posts').set(bearer(gabe)).send({ type: 'moment', title: 'x', game: 'Valorant' }).expect(201);
+    assert.equal(notOwned.body.post.steam, null);
+
+    // Changing the game re-checks; users without Steam never get a playtime.
+    const moved = await api().patch(`/api/posts/${notOwned.body.post.id}`).set(bearer(gabe)).send({ game: 'Hades II' }).expect(200);
+    assert.equal(moved.body.post.steam.hours, 85.5);
+    const noSteam = await api().post('/api/posts').set(bearer(ana)).send({ type: 'moment', title: 'y', game: 'Hades II' }).expect(201);
+    assert.equal(noSteam.body.post.steam, null);
+  } finally {
+    setSteam({ enabled: false, player: async () => null, playtime: async () => null });
+  }
+});
+
+// ---------- Giant Bomb ----------
+
+test('giant bomb: fills in games IGDB lacks and links game pages', async () => {
+  const { setGiantBomb } = await import('../src/lib/games.js');
+  const gb = {
+    'Obscure Indie': { gbGuid: '3030-1', gbUrl: 'https://www.giantbomb.com/obscure-indie/3030-1/', name: 'Obscure Indie', deck: 'A tiny game.', imageUrl: 'https://www.giantbomb.com/a/uploads/x.jpg', releaseDate: new Date('2024-01-02'), platforms: ['PC'] },
+    'Hades II': { gbGuid: '3030-2', gbUrl: 'https://www.giantbomb.com/hades-ii/3030-2/', name: 'Hades II', deck: 'Roguelike sequel.', imageUrl: 'https://www.giantbomb.com/a/uploads/h.jpg', releaseDate: null, platforms: [] },
+  };
+  let lookups = 0;
+  setGiantBomb({
+    enabled: true,
+    match: async (name) => {
+      lookups += 1;
+      return Object.values(gb).find((g) => g.name.toLowerCase() === name.toLowerCase()) ?? null;
+    },
+  });
+  try {
+    const post = await api().post('/api/posts').set(bearer(ana)).send({ type: 'moment', title: 'z', game: 'obscure indie' }).expect(201);
+    assert.deepEqual(post.body.post.game, { name: 'Obscure Indie', slug: 'obscure-indie' });
+    const page = await api().get('/api/games/obscure-indie').expect(200);
+    assert.equal(page.body.game.meta.summary, 'A tiny game.');
+    assert.equal(page.body.game.meta.giantBombUrl, 'https://www.giantbomb.com/obscure-indie/3030-1/');
+    assert.equal(page.body.game.cover, 'https://www.giantbomb.com/a/uploads/x.jpg');
+
+    // An existing game page gets its Giant Bomb link once, then isn't looked up again.
+    const before = lookups;
+    const hades = await api().get('/api/games/hades-ii').expect(200);
+    assert.equal(hades.body.game.meta.giantBombUrl, 'https://www.giantbomb.com/hades-ii/3030-2/');
+    await api().get('/api/games/hades-ii').expect(200);
+    assert.equal(lookups, before + 1);
+  } finally {
+    setGiantBomb({ enabled: false, match: async () => null });
   }
 });
 

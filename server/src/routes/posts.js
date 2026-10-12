@@ -8,6 +8,7 @@ import Comment from '../models/Comment.js';
 import { optionalAuth, requireAuth } from '../middleware/auth.js';
 import { HttpError, escapeRegex, youtubeId } from '../lib/http.js';
 import { resolveGame } from '../lib/games.js';
+import { steamApi } from '../lib/steam.js';
 import config from '../config.js';
 
 const router = Router();
@@ -52,6 +53,24 @@ const applyInput = async (post, body = {}) => {
   if (body.media !== undefined) post.media = parseMedia(body.media);
   if (body.rating !== undefined && body.rating !== null && body.rating !== '') post.rating = Number(body.rating);
 };
+
+// Records the author's Steam playtime for the post's game. Best effort: Steam being down,
+// a private profile or an unowned game just means no playtime is shown.
+async function attachSteamPlaytime(post) {
+  if (!steamApi().enabled) return;
+  const author = await User.findById(post.author).select('connections.steam');
+  const steamId = author?.connections?.steam?.id;
+  if (!steamId) {
+    post.steam = undefined;
+    return;
+  }
+  try {
+    const found = await steamApi().playtime(steamId, post.game.name);
+    post.steam = found ? { appid: found.appid, minutes: found.minutes } : undefined;
+  } catch (err) {
+    console.warn('[steam]', err.message);
+  }
+}
 
 router.get('/', optionalAuth, async (req, res) => {
   const { type, game, tag, author, q, sort = 'latest', period, feed } = req.query;
@@ -98,6 +117,8 @@ router.get('/:id', optionalAuth, async (req, res) => {
 router.post('/', requireAuth, async (req, res) => {
   const post = new Post({ author: req.userId });
   await applyInput(post, req.body);
+  await post.validate();
+  await attachSteamPlaytime(post);
   await post.save();
   await post.populate('author', AUTHOR_FIELDS);
   res.status(201).json({ post: post.toPublic(req.userId) });
@@ -106,7 +127,9 @@ router.post('/', requireAuth, async (req, res) => {
 router.patch('/:id', requireAuth, async (req, res) => {
   const post = await findPost(req.params.id);
   if (!post.author.equals(req.userId)) throw new HttpError(403, 'You can only edit your own posts');
+  const previousGame = post.game.slug;
   await applyInput(post, req.body);
+  if (post.game.slug !== previousGame) await attachSteamPlaytime(post);
   await post.save();
   await post.populate('author', AUTHOR_FIELDS);
   res.json({ post: post.toPublic(req.userId) });

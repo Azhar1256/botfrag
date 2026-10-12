@@ -28,6 +28,7 @@ const userSchema = new mongoose.Schema(
     connections: {
       discord: { id: String, username: String },
       twitch: { id: String, username: String },
+      steam: { id: String, username: String },
     },
     avatarUrl: { type: String, default: '' },
     bio: { type: String, maxlength: 280, default: '' },
@@ -44,9 +45,10 @@ const userSchema = new mongoose.Schema(
 
 userSchema.index({ 'connections.discord.id': 1 }, { unique: true, sparse: true });
 userSchema.index({ 'connections.twitch.id': 1 }, { unique: true, sparse: true });
+userSchema.index({ 'connections.steam.id': 1 }, { unique: true, sparse: true });
 
 userSchema.methods.hasConnection = function hasConnection() {
-  return Boolean(this.connections?.discord?.id || this.connections?.twitch?.id);
+  return Boolean(this.connections?.discord?.id || this.connections?.twitch?.id || this.connections?.steam?.id);
 };
 
 // The shape every API response uses for a user. Never includes email or password.
@@ -65,7 +67,10 @@ userSchema.methods.toPublic = function toPublic(viewerId) {
     connections: {
       discord: this.connections?.discord?.username ?? null,
       twitch: this.connections?.twitch?.username ?? null,
+      steam: this.connections?.steam?.username ?? null,
     },
+    // Lets the profile link to the Steam profile without exposing anything else.
+    steamId: this.connections?.steam?.id ?? null,
     joinedAt: this.createdAt,
   };
 };
