@@ -76,7 +76,7 @@ Create a Giant Bomb account, copy your key from [giantbomb.com/api](https://www.
 Run the API and the web app in two terminals:
 
 ```bash
-npm run dev:server   # API on http://localhost:5000
+npm run dev:server   # API on http://localhost:5050
 npm run dev:client   # app on http://localhost:5173 (proxies /api to the server)
 ```
 
